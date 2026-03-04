@@ -45,7 +45,7 @@ jobs:
       - name: Claude Auto Fix
         uses: anthropics/claude-code-action@beta
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           trigger_phrase: "auto-fix"
           direct_prompt: |
             CIが失敗しました。以下のエラーログを分析して修正PRを作成してください。
