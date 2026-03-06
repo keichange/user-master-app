@@ -39,3 +39,43 @@ jobs:
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: ':memory:'
+
+  auto-fix:
+    runs-on: ubuntu-latest
+    needs: test
+    # テストが失敗 かつ mainへのpushのときだけ実行
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Claude Auto Fix
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          direct_prompt: |
+            CIのテストが失敗しました。コードを分析して修正PRを作成してください。
+
+            ## 修正ルール（CLAUDE.mdを必ず確認）
+            - 1ファイルの変更に留める
+            - マイグレーションファイルは変更しない
+            - .github/workflows/ は変更しない
+            - Draft PRとして作成する
+            - PR本文に根本原因・修正内容・影響範囲を日本語で記載
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": ":red_circle: *CIが失敗しました*\nリポジトリ: ${{ github.repository }}\nブランチ: ${{ github.ref_name }}\nコミット: ${{ github.sha }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|詳細を見る>"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
