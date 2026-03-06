@@ -10,6 +10,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    outputs:
+      test_output: ${{ steps.run_tests.outputs.test_output }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +38,13 @@ jobs:
           DB_DATABASE: ':memory:'
 
       - name: Run tests
-        run: php artisan test
+        id: run_tests
+        run: |
+          output=$(php artisan test 2>&1) || true
+          echo "test_output<<EOF" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          php artisan test
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: ':memory:'
@@ -43,30 +52,136 @@ jobs:
   auto-fix:
     runs-on: ubuntu-latest
     needs: test
-    # テストが失敗 かつ mainへのpushのときだけ実行
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     permissions:
       contents: write
       pull-requests: write
-      id-token: write
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Claude Auto Fix
-        uses: anthropics/claude-code-action@beta
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          direct_prompt: |
-            CIのテストが失敗しました。コードを分析して修正PRを作成してください。
+          python-version: '3.12'
 
-            ## 修正ルール（CLAUDE.mdを必ず確認）
-            - 1ファイルの変更に留める
-            - マイグレーションファイルは変更しない
-            - .github/workflows/ は変更しない
-            - Draft PRとして作成する
-            - PR本文に根本原因・修正内容・影響範囲を日本語で記載
+      - name: Install dependencies
+        run: pip install google-generativeai requests
+
+      - name: Gemini Auto Fix
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          TEST_OUTPUT: ${{ needs.test.outputs.test_output }}
+        run: |
+          python3 << 'PYEOF'
+          import os, subprocess, json, re
+          import google.generativeai as genai
+
+          genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+          model = genai.GenerativeModel("gemini-2.0-flash")
+
+          # エラーログを収集
+          test_output = os.environ.get("TEST_OUTPUT", "")
+
+          # 関連ファイルを収集（app/以下のPHPファイル）
+          code_context = ""
+          for root, dirs, files in os.walk("app"):
+              dirs[:] = [d for d in dirs if d not in ["vendor"]]
+              for f in files:
+                  if f.endswith(".php"):
+                      path = os.path.join(root, f)
+                      with open(path) as fp:
+                          code_context += f"\n\n### {path}\n```php\n{fp.read()}\n```"
+
+          prompt = f"""
+          LaravelアプリのCIテストが失敗しました。
+          エラーを分析し、修正が必要なファイルと修正後の完全なコードをJSON形式で返してください。
+
+          ## テスト出力
+          {test_output[:4000]}
+
+          ## ソースコード
+          {code_context[:6000]}
+
+          ## CLAUDE.md（ルール）
+          - マイグレーションファイルは変更しない
+          - .github/workflows/ は変更しない
+          - 1ファイルのみ変更する
+
+          ## 出力形式（JSONのみ。説明文は不要）
+          {{
+            "file": "変更するファイルパス",
+            "content": "修正後の完全なファイル内容",
+            "reason": "根本原因（日本語）",
+            "summary": "修正内容の要約（日本語）"
+          }}
+          """
+
+          response = model.generate_content(prompt)
+          text = response.text.strip()
+
+          # JSONを抽出
+          match = re.search(r'\{.*\}', text, re.DOTALL)
+          if not match:
+              print("JSONが取得できませんでした")
+              print(text)
+              exit(1)
+
+          data = json.loads(match.group())
+          file_path = data["file"]
+          new_content = data["content"]
+          reason = data.get("reason", "不明")
+          summary = data.get("summary", "自動修正")
+
+          print(f"修正対象: {file_path}")
+          print(f"根本原因: {reason}")
+
+          # ファイルを修正
+          with open(file_path, "w") as fp:
+              fp.write(new_content)
+
+          # ブランチを作成してPRを出す
+          branch = f"auto-fix/{os.environ['SHA'][:8]}"
+          subprocess.run(["git", "config", "user.email", "github-actions@github.com"], check=True)
+          subprocess.run(["git", "config", "user.name", "GitHub Actions"], check=True)
+          subprocess.run(["git", "checkout", "-b", branch], check=True)
+          subprocess.run(["git", "add", file_path], check=True)
+          subprocess.run(["git", "commit", "-m", f"fix: Gemini自動修正 - {summary}"], check=True)
+          subprocess.run(["git", "push", "origin", branch], check=True)
+
+          # Draft PRを作成
+          pr_body = f"""## AI自動修正PR（要レビュー）
+
+          ### 根本原因
+          {reason}
+
+          ### 修正内容
+          {summary}
+
+          ### 変更ファイル
+          `{file_path}`
+
+          ---
+          > このPRはGemini AIが自動生成しました。マージ前に必ずレビューしてください。
+          """
+
+          result = subprocess.run([
+              "gh", "pr", "create",
+              "--title", f"[Auto Fix] {summary}",
+              "--body", pr_body,
+              "--base", "main",
+              "--head", branch,
+              "--draft"
+          ], capture_output=True, text=True)
+
+          print(result.stdout)
+          print(result.stderr)
+          PYEOF
 
       - name: Notify Slack
         if: always()
@@ -74,7 +189,7 @@ jobs:
         with:
           payload: |
             {
-              "text": ":red_circle: *CIが失敗しました*\nリポジトリ: ${{ github.repository }}\nブランチ: ${{ github.ref_name }}\nコミット: ${{ github.sha }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|詳細を見る>"
+              "text": ":red_circle: *CIが失敗しました（Gemini自動修正PRを確認してください）*\nリポジトリ: ${{ github.repository }}\nブランチ: ${{ github.ref_name }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Actions詳細>"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
