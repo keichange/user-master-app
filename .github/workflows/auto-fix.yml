@@ -14,6 +14,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +67,7 @@ jobs:
             - PR本文に根本原因・修正内容・影響範囲を日本語で記載
 
       - name: Notify Slack on failure
-        if: failure()
+        if: always()
         uses: slackapi/slack-github-action@v1.27.0
         with:
           payload: |
