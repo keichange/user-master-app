@@ -84,7 +84,7 @@ jobs:
           echo "=== agent version ==="
           agent --version || echo "version check failed"
           echo "=== agent help ==="
-          agent --help 2>&1 | head -20 || echo "help failed"
+          agent --help 2>&1 || echo "help failed"
 
           # Cursor エージェントに修正を依頼
           echo "=== Running agent ==="
@@ -98,7 +98,7 @@ jobs:
           - 1ファイルのみ変更する
           - database/migrations/ は変更しない
           - .github/workflows/ は変更しない
-          " --max-turns 10 2>&1 || echo "agent exit code: $?"
+          " 2>&1 || echo "agent exit code: $?"
           echo "=== git status after agent ==="
           git status
 
