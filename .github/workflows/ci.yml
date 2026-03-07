@@ -70,6 +70,7 @@ jobs:
         run: pip install google-genai requests
 
       - name: Gemini Auto Fix
+        id: gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -189,12 +190,13 @@ jobs:
           print(result.stdout)
           print(result.stderr)
 
-          # PR URLを取得してファイルに保存
+          # PR URLをGitHub Outputs に書き出す
           pr_url = result.stdout.strip()
-          with open("/tmp/pr_url.txt", "w") as f:
-              f.write(pr_url if pr_url.startswith("http") else "")
-          with open("/tmp/pr_summary.txt", "w") as f:
-              f.write(summary)
+          github_output = os.environ.get("GITHUB_OUTPUT", "")
+          if github_output:
+              with open(github_output, "a") as f:
+                  f.write(f"pr_url={pr_url if pr_url.startswith('http') else ''}\n")
+                  f.write(f"summary={summary}\n")
           PYEOF
 
       - name: Notify Slack - PR作成成功
@@ -203,7 +205,7 @@ jobs:
         with:
           payload: |
             {
-              "text": ":white_check_mark: *Geminiが自動修正PRを作成しました（レビューしてください）*\n修正内容: $(cat /tmp/pr_summary.txt)\nPR: $(cat /tmp/pr_url.txt)\nリポジトリ: ${{ github.repository }}"
+              "text": ":white_check_mark: *Geminiが自動修正PRを作成しました（レビューしてください）*\n修正内容: ${{ steps.gemini.outputs.summary }}\nPR: ${{ steps.gemini.outputs.pr_url }}\nリポジトリ: ${{ github.repository }}"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
