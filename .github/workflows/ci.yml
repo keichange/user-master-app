@@ -100,13 +100,16 @@ jobs:
             git commit -m "fix: Cursor自動修正 - $SUMMARY"
             git push origin "$BRANCH"
 
+            # ANSIカラーコードを除去
+            CLEAN_OUTPUT=$(echo "${TEST_OUTPUT:0:1000}" | sed 's/\x1b\[[0-9;]*m//g')
+
             PR_URL=$(gh pr create \
               --title "[Auto Fix] Cursor自動修正 ${SHA:0:8}" \
               --body "## AI自動修正PR（要レビュー）
 
           ### エラーログ
           \`\`\`
-          ${TEST_OUTPUT:0:1000}
+          ${CLEAN_OUTPUT}
           \`\`\`
 
           ---
