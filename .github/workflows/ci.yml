@@ -188,15 +188,34 @@ jobs:
 
           print(result.stdout)
           print(result.stderr)
+
+          # PR URLを取得してファイルに保存
+          pr_url = result.stdout.strip()
+          with open("/tmp/pr_url.txt", "w") as f:
+              f.write(pr_url if pr_url.startswith("http") else "")
+          with open("/tmp/pr_summary.txt", "w") as f:
+              f.write(summary)
           PYEOF
 
-      - name: Notify Slack
-        if: always()
+      - name: Notify Slack - PR作成成功
+        if: success()
         uses: slackapi/slack-github-action@v1.27.0
         with:
           payload: |
             {
-              "text": ":red_circle: *CIが失敗しました（Gemini自動修正PRを確認してください）*\nリポジトリ: ${{ github.repository }}\nブランチ: ${{ github.ref_name }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Actions詳細>"
+              "text": ":white_check_mark: *Geminiが自動修正PRを作成しました（レビューしてください）*\n修正内容: $(cat /tmp/pr_summary.txt)\nPR: $(cat /tmp/pr_url.txt)\nリポジトリ: ${{ github.repository }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify Slack - 自動修正失敗
+        if: failure()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": ":sos: *Geminiの自動修正に失敗しました（手動対応が必要です）*\nリポジトリ: ${{ github.repository }}\nブランチ: ${{ github.ref_name }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Actions詳細>"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
