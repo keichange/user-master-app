@@ -9,7 +9,7 @@ class UserController extends Controller
 {
     public function index()
     {
-        $users = UserMaster::orderBy('created_at', 'desc')->paginate(20)
+        $users = UserMaster::orderBy('created_at', 'desc')->paginate(20);
         return view('users.index', compact('users'));
     }
 
