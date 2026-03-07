@@ -61,143 +61,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install Cursor CLI
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.cursor/bin" >> $GITHUB_PATH
 
-      - name: Install dependencies
-        run: pip install google-genai requests
-
-      - name: Gemini Auto Fix
-        id: gemini
+      - name: Cursor Auto Fix
+        id: cursor
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          RUN_ID: ${{ github.run_id }}
           TEST_OUTPUT: ${{ needs.test.outputs.test_output }}
         run: |
-          python3 << 'PYEOF'
-          import os, subprocess, json, re
-          from google import genai
+          BRANCH="auto-fix/${SHA:0:8}"
+          git config user.email "github-actions@github.com"
+          git config user.name "GitHub Actions"
+          git checkout -b "$BRANCH"
 
-          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+          # Cursor エージェントに修正を依頼
+          agent -p "
+          CIのテストが失敗しました。以下のエラーログを分析してコードを修正してください。
 
-          # エラーログを収集
-          test_output = os.environ.get("TEST_OUTPUT", "")
+          ## エラーログ
+          ${TEST_OUTPUT:0:3000}
 
-          # 関連ファイルを収集（app/以下のPHPファイル）
-          code_context = ""
-          for root, dirs, files in os.walk("app"):
-              dirs[:] = [d for d in dirs if d not in ["vendor"]]
-              for f in files:
-                  if f.endswith(".php"):
-                      path = os.path.join(root, f)
-                      with open(path) as fp:
-                          code_context += f"\n\n### {path}\n```php\n{fp.read()}\n```"
-
-          prompt = f"""
-          LaravelアプリのCIテストが失敗しました。
-          エラーを分析し、以下の形式で回答してください。
-
-          ## テスト出力
-          {test_output[:4000]}
-
-          ## ソースコード
-          {code_context[:6000]}
-
-          ## ルール
-          - マイグレーションファイルは変更しない
-          - .github/workflows/ は変更しない
+          ## 修正ルール（CLAUDE.mdを必ず確認）
           - 1ファイルのみ変更する
+          - database/migrations/ は変更しない
+          - .github/workflows/ は変更しない
+          " --max-turns 10
 
-          ## 回答形式（この形式を厳守）
+          # 変更があればコミット＆PR作成
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            SUMMARY=$(git diff --cached --stat | head -1)
+            git commit -m "fix: Cursor自動修正 - $SUMMARY"
+            git push origin "$BRANCH"
 
-          FILE: 変更するファイルパス
-          REASON: 根本原因（日本語・1行）
-          SUMMARY: 修正内容の要約（日本語・1行）
-          CONTENT:
-          ```php
-          修正後のファイル全体の内容をここに書く
-          ```
-          """
+            PR_URL=$(gh pr create \
+              --title "[Auto Fix] Cursor自動修正 ${SHA:0:8}" \
+              --body "## AI自動修正PR（要レビュー）
 
-          response = client.models.generate_content(
-              model="gemini-3.1-flash-lite-preview", contents=prompt
-          )
-          text = response.text.strip()
-          print("=== Gemini response ===")
-          print(text[:500])
-
-          # 各フィールドを抽出
-          file_match    = re.search(r'^FILE:\s*(.+)$', text, re.MULTILINE)
-          reason_match  = re.search(r'^REASON:\s*(.+)$', text, re.MULTILINE)
-          summary_match = re.search(r'^SUMMARY:\s*(.+)$', text, re.MULTILINE)
-          content_match = re.search(r'```php\n(.*?)```', text, re.DOTALL)
-
-          if not (file_match and content_match):
-              print("必要な情報が取得できませんでした")
-              exit(1)
-
-          file_path   = file_match.group(1).strip()
-          reason      = reason_match.group(1).strip() if reason_match else "不明"
-          summary     = summary_match.group(1).strip() if summary_match else "自動修正"
-          new_content = content_match.group(1)
-
-          print(f"修正対象: {file_path}")
-          print(f"根本原因: {reason}")
-
-          # ファイルを修正
-          with open(file_path, "w") as fp:
-              fp.write(new_content)
-
-          # ブランチを作成してPRを出す
-          branch = f"auto-fix/{os.environ['SHA'][:8]}"
-          subprocess.run(["git", "config", "user.email", "github-actions@github.com"], check=True)
-          subprocess.run(["git", "config", "user.name", "GitHub Actions"], check=True)
-          subprocess.run(["git", "checkout", "-b", branch], check=True)
-          subprocess.run(["git", "add", file_path], check=True)
-          subprocess.run(["git", "commit", "-m", f"fix: Gemini自動修正 - {summary}"], check=True)
-          subprocess.run(["git", "push", "origin", branch], check=True)
-
-          # Draft PRを作成
-          pr_body = f"""## AI自動修正PR（要レビュー）
-
-          ### 根本原因
-          {reason}
-
-          ### 修正内容
-          {summary}
-
-          ### 変更ファイル
-          `{file_path}`
+          ### エラーログ
+          \`\`\`
+          ${TEST_OUTPUT:0:1000}
+          \`\`\`
 
           ---
-          > このPRはGemini AIが自動生成しました。マージ前に必ずレビューしてください。
-          """
+          > このPRはCursor AIが自動生成しました。マージ前に必ずレビューしてください。" \
+              --base main \
+              --head "$BRANCH" \
+              --draft)
 
-          result = subprocess.run([
-              "gh", "pr", "create",
-              "--title", f"[Auto Fix] {summary}",
-              "--body", pr_body,
-              "--base", "main",
-              "--head", branch,
-              "--draft"
-          ], capture_output=True, text=True)
-
-          print(result.stdout)
-          print(result.stderr)
-
-          # PR URLをGitHub Outputs に書き出す
-          pr_url = result.stdout.strip()
-          github_output = os.environ.get("GITHUB_OUTPUT", "")
-          if github_output:
-              with open(github_output, "a") as f:
-                  f.write(f"pr_url={pr_url if pr_url.startswith('http') else ''}\n")
-                  f.write(f"summary={summary}\n")
-          PYEOF
+            echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+            echo "summary=Cursor自動修正 ${SHA:0:8}" >> $GITHUB_OUTPUT
+          else
+            echo "変更なし - 自動修正できませんでした"
+            exit 1
+          fi
 
       - name: Notify Slack - PR作成成功
         if: success()
@@ -205,7 +127,7 @@ jobs:
         with:
           payload: |
             {
-              "text": ":white_check_mark: *Geminiが自動修正PRを作成しました（レビューしてください）*\n修正内容: ${{ steps.gemini.outputs.summary }}\nPR: ${{ steps.gemini.outputs.pr_url }}\nリポジトリ: ${{ github.repository }}"
+              "text": ":white_check_mark: *Cursorが自動修正PRを作成しました（レビューしてください）*\nPR: ${{ steps.cursor.outputs.pr_url }}\nリポジトリ: ${{ github.repository }}"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -217,7 +139,7 @@ jobs:
         with:
           payload: |
             {
-              "text": ":sos: *Geminiの自動修正に失敗しました（手動対応が必要です）*\nリポジトリ: ${{ github.repository }}\nブランチ: ${{ github.ref_name }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Actions詳細>"
+              "text": ":sos: *Cursorの自動修正に失敗しました（手動対応が必要です）*\nリポジトリ: ${{ github.repository }}\nブランチ: ${{ github.ref_name }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Actions詳細>"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
