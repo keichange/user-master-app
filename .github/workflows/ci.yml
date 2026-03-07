@@ -64,10 +64,8 @@ jobs:
       - name: Install Cursor CLI
         run: |
           curl https://cursor.com/install -fsS | bash
-          echo "$HOME/.cursor/bin" >> $GITHUB_PATH
-          echo "=== インストール確認 ==="
-          ls $HOME/.cursor/bin/ || true
-          find $HOME/.cursor -type f -executable 2>/dev/null | head -20 || true
+          # インストール先は $HOME/.local/bin/agent
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Cursor Auto Fix
         id: cursor
