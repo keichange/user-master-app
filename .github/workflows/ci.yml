@@ -99,7 +99,7 @@ jobs:
 
           prompt = f"""
           LaravelアプリのCIテストが失敗しました。
-          エラーを分析し、修正が必要なファイルと修正後の完全なコードをJSON形式で返してください。
+          エラーを分析し、以下の形式で回答してください。
 
           ## テスト出力
           {test_output[:4000]}
@@ -107,37 +107,43 @@ jobs:
           ## ソースコード
           {code_context[:6000]}
 
-          ## CLAUDE.md（ルール）
+          ## ルール
           - マイグレーションファイルは変更しない
           - .github/workflows/ は変更しない
           - 1ファイルのみ変更する
 
-          ## 出力形式（JSONのみ。説明文は不要）
-          {{
-            "file": "変更するファイルパス",
-            "content": "修正後の完全なファイル内容",
-            "reason": "根本原因（日本語）",
-            "summary": "修正内容の要約（日本語）"
-          }}
+          ## 回答形式（この形式を厳守）
+
+          FILE: 変更するファイルパス
+          REASON: 根本原因（日本語・1行）
+          SUMMARY: 修正内容の要約（日本語・1行）
+          CONTENT:
+          ```php
+          修正後のファイル全体の内容をここに書く
+          ```
           """
 
           response = client.models.generate_content(
               model="gemini-3.1-flash-lite-preview", contents=prompt
           )
           text = response.text.strip()
+          print("=== Gemini response ===")
+          print(text[:500])
 
-          # JSONを抽出
-          match = re.search(r'\{.*\}', text, re.DOTALL)
-          if not match:
-              print("JSONが取得できませんでした")
-              print(text)
+          # 各フィールドを抽出
+          file_match    = re.search(r'^FILE:\s*(.+)$', text, re.MULTILINE)
+          reason_match  = re.search(r'^REASON:\s*(.+)$', text, re.MULTILINE)
+          summary_match = re.search(r'^SUMMARY:\s*(.+)$', text, re.MULTILINE)
+          content_match = re.search(r'```php\n(.*?)```', text, re.DOTALL)
+
+          if not (file_match and content_match):
+              print("必要な情報が取得できませんでした")
               exit(1)
 
-          data = json.loads(match.group())
-          file_path = data["file"]
-          new_content = data["content"]
-          reason = data.get("reason", "不明")
-          summary = data.get("summary", "自動修正")
+          file_path   = file_match.group(1).strip()
+          reason      = reason_match.group(1).strip() if reason_match else "不明"
+          summary     = summary_match.group(1).strip() if summary_match else "自動修正"
+          new_content = content_match.group(1)
 
           print(f"修正対象: {file_path}")
           print(f"根本原因: {reason}")
