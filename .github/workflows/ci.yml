@@ -80,14 +80,7 @@ jobs:
           git config user.name "GitHub Actions"
           git checkout -b "$BRANCH"
 
-          # agentのバージョン・ヘルプ確認
-          echo "=== agent version ==="
-          agent --version || echo "version check failed"
-          echo "=== agent help ==="
-          agent --help 2>&1 || echo "help failed"
-
-          # Cursor エージェントに修正を依頼（NO_OPEN_BROWSER=1でブラウザ起動抑制）
-          echo "=== Running agent ==="
+          # Cursor エージェントに修正を依頼
           NO_OPEN_BROWSER=1 agent --print --trust --yolo "
           CIのテストが失敗しました。以下のエラーログを分析してコードを修正してください。
 
@@ -98,9 +91,7 @@ jobs:
           - 1ファイルのみ変更する
           - database/migrations/ は変更しない
           - .github/workflows/ は変更しない
-          " 2>&1 || echo "agent exit code: $?"
-          echo "=== git status after agent ==="
-          git status
+          " || true
 
           # 変更があればコミット＆PR作成
           if [ -n "$(git status --porcelain)" ]; then
