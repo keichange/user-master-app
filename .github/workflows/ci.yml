@@ -86,13 +86,9 @@ jobs:
           echo "=== agent help ==="
           agent --help 2>&1 || echo "help failed"
 
-          # 認証状態確認
-          echo "=== agent status ==="
-          agent status 2>&1 || echo "status check failed"
-
-          # Cursor エージェントに修正を依頼
+          # Cursor エージェントに修正を依頼（NO_OPEN_BROWSER=1でブラウザ起動抑制）
           echo "=== Running agent ==="
-          agent --print --trust --yolo "
+          NO_OPEN_BROWSER=1 agent --print --trust --yolo "
           CIのテストが失敗しました。以下のエラーログを分析してコードを修正してください。
 
           ## エラーログ
